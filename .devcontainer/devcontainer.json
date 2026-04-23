@@ -1,0 +1,16 @@
+{
+  "name": "Audit Environment - SNARKeling",
+  "image": "ubuntu:22.04",
+  "postCreateCommand": "apt-get update && apt-get install -y curl git build-essential python3 python3-pip && pip3 install slither-analyzer solc-select",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "JuanBlanco.solidity",
+        "noir-lang.vscode-noir",
+        "anthropic.claude-code",
+        "tintinweb.solidity-metrics",
+        "cyfrin.aderyn"
+      ]
+    }
+  }
+}

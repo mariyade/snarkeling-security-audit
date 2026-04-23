@@ -1,0 +1,5 @@
+{
+    "detectors_to_exclude": "naming-convention,solc-version,similar-names",
+    "filter_paths": "(test/|scripts/)",
+    "exclude_dependencies": true
+}

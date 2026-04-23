@@ -1,162 +1,170 @@
-# SNARKeling Treasure Hunt
+# SNARKeling TreasureHunt — Security Audit
 
-*   Starts: April 16, 2026
+**Auditor:** Mariya Danilova 
+**Date:** April 2026  
+**Contest:** [CodeHawks — 2026-04-snarkeling](https://github.com/CodeHawks-Contests/2026-04-snarkeling)  
+**Original codebase:** forked from [CodeHawks-Contests/2026-04-snarkeling](https://github.com/CodeHawks-Contests/2026-04-snarkeling)
 
-*   Ends:  April 23, 2026
+---
 
-*   nSLOC: \~220
+## What This Repository Is
 
-[//]: # (contest-details-open)
+This is a **security audit** of the SNARKeling TreasureHunt protocol — an on-chain treasure hunt where players submit Barretenberg/Noir ZK proofs to claim ETH rewards.
 
-## About the Project
+The original contest code is preserved unmodified. Everything listed under [What I Added](#what-i-added) is my own audit work.
 
-SNARKeling Treasure Hunt is a real-world snorkeling treasure hunt with on-chain reward claiming on an EVM blockchain. Participants physically find hidden treasures and then submit a zero-knowledge proof showing they know the correct treasure secret, without revealing the secret itself. The protocol verifies the proof on-chain and pays out an ETH reward to the designated recipient. This mechanism is built around a Noir circuit and a generated Barretenberg Honk verifier contract (more theory here https://updraft.cyfrin.io/courses/noir-programming-and-zk-circuits). 
+---
 
-Key Features:
+## Protocol Summary
 
-*   Real-world treasure hunt with blockchain-based reward settlement 
+TreasureHunt holds 100 ETH (10 × 10 ETH rewards). A player who physically finds a treasure generates a ZK proof that they know the secret behind one of 10 pre-committed treasure hashes, then calls `claim()` with the proof, the hash, and a recipient address. If the proof verifies on-chain, the contract pays 10 ETH to the recipient.
 
-*   ZK-SNARK based proof verification for treasure discovery 
+---
 
-*   Noir circuit that proves knowledge of a valid treasure secret without revealing it 
+## Findings Summary
 
-*   On-chain ETH reward distribution to a recipient bound into the proof 
+| ID | Title | Severity |
+|----|-------|----------|
+| [H-1](#h-1) | Stub verifier accepts any proof — full prize pool drainable | High |
+| [H-2](#h-2) | Double-spend check uses wrong mapping key — same treasure claimable 10 times | High |
+| [H-3](#h-3) | Treasure secrets trivially brute-forceable from public circuit data | High |
+| [H-4](#h-4) | Duplicate entry in `ALLOWED_TREASURE_HASHES` — only 9 unique treasures exist | High |
+| [H-5](#h-5) | Negative field elements in `Prover.toml.example` — 6 of 10 treasures unclaimable | High |
+| [M-1](#m-1) | CEI pattern violated in `emergencyWithdraw` and `withdraw` | Medium |
+| [L-1](#l-1) | `updateVerifier` missing address(0) check — can brick the contract | Low |
+| [L-2](#l-2) | `Claimed` event emits `msg.sender` instead of `recipient` | Low |
+| [L-3](#l-3) | `nonReentrant` applied to only one of three ETH-sending functions | Low |
+| [L-4](#l-4) | `recipient` public input unconstrained in ZK circuit | Low |
+| [I-1](#i-1) | 11 custom errors declared but never used | Informational |
+| [I-2](#i-2) | Mixed error-handling styles | Informational |
+| [I-3](#i-3) | Unspecific Solidity pragma | Informational |
+| [I-4](#i-4) | PUSH0 opcode — EVM version compatibility | Informational |
+| [I-5](#i-5) | Unused state variable `_treasureHash` | Informational |
+| [I-6](#i-6) | `bb` missing from devcontainer — build pipeline incomplete | Informational |
 
-*   Replay-resistance through recipient binding as a public input 
+**Full report:** [2026-04-snarkeling-audit.md](2026-04-snarkeling-audit.md)
 
-*   Owner-controlled pause/unpause, verifier update, emergency withdrawal, and post-hunt fund withdrawal flows 
+---
 
-The protocol works as follows:
+## Critical Bug Highlight — H-2
 
-1.  The organizer deploys the verifier and `TreasureHunt` contract and funds the hunt with ETH. 
+The double-spend guard on line 88 reads from `claimed[_treasureHash]` — an immutable state variable that is **never assigned**, always `bytes32(0)` — while the write on line 104 correctly uses the calldata parameter `treasureHash`.
 
-2.  A participant finds a physical treasure associated with a unique secret string. 
+```solidity
+// TreasureHunt.sol:35 — never initialized, always bytes32(0)
+bytes32 private immutable _treasureHash;
 
-3.  Off-chain, the participant generates a ZK proof that:
-    *   they know a valid treasure secret,
-    *   its Pedersen hash matches one of the allowed treasure hashes baked into the circuit,
-    *   and the proof is bound to a specific recipient address. 
+// Line 88 — WRONG: checks bytes32(0) slot, not the claimed treasure
+if (claimed[_treasureHash]) revert AlreadyClaimed(treasureHash);
 
-4.  The participant submits the proof, treasure hash, and recipient to the `TreasureHunt` contract.
+// Line 104 — correct write, but the check above never triggers
+_markClaimed(treasureHash);
+```
 
-5.  If the proof is valid and the treasure has not already been claimed, the contract transfers the fixed ETH reward to the recipient and marks the treasure as claimed. 
+Result: any non-zero treasure hash can be claimed repeatedly until `claimsCount` hits `MAX_TREASURES`, draining all 100 ETH.
 
+---
 
-## Actors
+## What I Added
 
-**Participant / Treasure Finder:**
+All files below were created as part of this audit. The original contest code is untouched.
 
-*   Powers: Can submit a ZK proof to claim a treasure reward for a valid recipient address. 
+```
+contracts/test/
+├── TreasureHuntExploits.t.sol     ← PoC tests reproducing H-1, H-2, missing onlyOwner, L-1, L-2
+├── TreasureHuntFuzz.t.sol         ← Fuzz tests: recipient validation, fund amounts, withdraw bounds
+├── TreasureHuntInvariants.t.sol   ← Invariant tests including one that FAILS to prove H-2
+└── handlers/
+    └── TreasureHuntHandler.sol    ← Foundry invariant handler with ghost variables
 
-*   Limitations: Cannot claim with an invalid proof, cannot claim an already-claimed treasure, cannot claim if the contract lacks sufficient funds, and cannot use invalid recipients such as the zero address, the contract address, the owner, or the caller itself. 
+2026-04-snarkeling-audit.md        ← Full audit report (PDF also available)
+slither.config.json                ← Slither static analysis configuration
+```
 
+---
 
-**Owner / Hunt Organizer:**
+## Running the Tests
 
-*   Powers: Deploys and funds the hunt, pauses/unpauses the contract, updates the verifier while paused, emergency-withdraws ETH while paused, and withdraws leftover funds after all treasures have been claimed. Owner is trusted.
+```bash
+forge install foundry-rs/forge-std
+forge build
+```
 
-*   Limitations: Cannot claim treasure rewards as a participant and cannot set certain invalid recipients in emergency flows. 
+**Unit tests (original + audit):**
+```bash
+forge test --match-path "contracts/test/TreasureHunt.t.sol" -v
+```
 
+**Exploit PoCs — each test should PASS, proving the bug is real:**
+```bash
+forge test --match-path "contracts/test/TreasureHuntExploits.t.sol" -v
+```
 
-[//]: # (contest-details-close)
+**Fuzz tests:**
+```bash
+forge test --match-path "contracts/test/TreasureHuntFuzz.t.sol" -v
+```
 
-[//]: # (scope-open)
+**Invariant tests:**
+```bash
+# Safety invariants — should all pass
+forge test --match-test "invariant_claimsCount|invariant_owner|invariant_verifier|invariant_ghost" -v
 
-## Scope
+# This one FAILS on purpose — Foundry finds the H-2 counterexample
+forge test --match-test "invariant_doubleSpendProtection_FAILS_PROVING_H2" -vvvv
+```
 
-The following files are in scope for this contest: 
+---
 
-```js
+## Repository Structure
+
+```
 contracts/
-├── scripts/
-│   └── Deploy.s.sol
-└── src/
-    └── TreasureHunt.sol
+├── src/
+│   ├── TreasureHunt.sol       ← original (contains bugs documented above)
+│   └── Verifier.sol           ← original stub verifier (always returns true)
+└── test/
+    ├── TreasureHunt.t.sol     ← original contest tests
+    ├── TreasureHuntExploits.t.sol    ← [ADDED] PoC exploits
+    ├── TreasureHuntFuzz.t.sol        ← [ADDED] fuzz tests
+    ├── TreasureHuntInvariants.t.sol  ← [ADDED] invariant tests
+    └── handlers/
+        └── TreasureHuntHandler.sol   ← [ADDED] invariant handler
 
 circuits/
 └── src/
-    └── main.nr
+    ├── main.nr                ← original Noir ZK circuit
+    └── tests.nr               ← original circuit tests
+
+2026-04-snarkeling-audit.md   ← [ADDED] full audit report
 ```
 
+---
 
+## Original Protocol Documentation
 
-## Compatibilities
+<details>
+<summary>Setup instructions from the original contest repo</summary>
 
-**Blockchains:**
+**System requirements:** Linux or WSL2, Foundry, Noir/nargo (1.0.0-beta.19), Barretenberg/bb (4.0.0-nightly.20260120)
 
-*   Ethereum
-
-**Protocol Assumptions:**
-
-*   The hunt is preconfigured with a baked-in set of 10 valid treasure hashes in the circuit 
-
-*   The contract is expected to be funded with enough ETH to cover all rewards (default deployment flow uses `100 ether`) 
-
-*   The generated verifier contract must match the currently compiled circuit artifacts 
-
-
-[//]: # (scope-close)
-
-
-
-## Setup
-
-System requirements:
-
-*   Linux or WSL2
-*   Foundry 
-*   Noir / `nargo` (1.0.0-beta.19) https://noir-lang.org/docs/getting_started/quick_start
-*   Barretenberg / `bb` (4.0.0-nightly.20260120) https://barretenberg.aztec.network/docs/getting_started/
-
-Build:
-
-Clone the repo.
-
-### 1) Build circuit artifacts and generate verifier
-
-The build script:
-
-*   checks the Noir circuit,
-*   reads a selected treasure/hash pair from `circuits/Prover.toml.example`,
-*   writes a runtime `Prover.toml`,
-*   executes the circuit,
-*   generates a proof and verification key,
-*   writes `contracts/src/Verifier.sol`,
-*   and produces Foundry test fixtures. 
-
+**Build circuit artifacts and generate verifier:**
 ```bash
 cd circuits/scripts
 ./build.sh
 ```
 
-### 2) Build contracts
-
-Navigate to the project root.
-
+**Build contracts:**
 ```bash
-cd ../../
-forge install foundry-rs/forge-std
 forge build
 ```
 
-### 3) Run tests
-
+**Run original tests:**
 ```bash
-cd circuits
 forge test
 nargo test
 ```
 
+Note: `bb` is missing from the devcontainer (see I-6 in the audit report). Install it manually before running `build.sh`.
 
-[//]: # (getting-started-close)
-
-[//]: # (known-issues-open)
-
-## Known Issues
-
-*   The verifier contract is generated from circuit artifacts, so circuit changes require regenerating `Verifier.sol` and related fixtures before tests or deployment. 
-
-*   The set of allowed treasure hashes is baked into the Noir circuit, which means changing treasure inventory requires recompilation/regeneration of the proving artifacts. 
-
-[//]: # (known-issues-close)
-
+</details>
