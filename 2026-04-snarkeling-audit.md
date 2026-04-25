@@ -7,29 +7,10 @@ header-includes:
   - \usepackage{graphicx}
 ---
 
-\begin{titlepage}
-    \centering
-    \begin{figure}[h]
-        \centering
-        \includegraphics[width=0.5\textwidth]{logo.pdf}
-    \end{figure}
-    \vspace*{2cm}
-    {\Huge\bfseries TreasureHunt Protocol Security Audit Report\par}
-    \vspace{1cm}
-    {\Large Version 1.0\par}
-    \vspace{2cm}
-    {\Large\itshape Mariya Danilow\par}
-    \vfill
-    {\large April 20, 2026\par}
-\end{titlepage}
-
-\maketitle
 
 <!-- Your report starts here! -->
 
-Prepared by: [Mariya Danilow](mailto:mariyadanilow@gmail.com)
-
-Lead Security Researcher: Mariya Danilow
+Prepared by: *Mariya Danilova*
 
 # Table of Contents
 - [Table of Contents](#table-of-contents)
@@ -109,7 +90,7 @@ Total nSLOC: 176 (Solidity) + Noir circuits
 
 # Executive Summary
 
-Two critical vulnerabilities were found that, in combination, allow any user to drain the entire 100 ETH prize pool without a valid ZK proof and without any per-treasure uniqueness restriction. The contract is **not safe to deploy with funds** in its current state.
+Two critical vulnerabilities were found that, in combination, allow any user to drain the entire 100 ETH prize pool without a valid ZK proof and without any per-treasure uniqueness restriction. The contract is not safe to deploy with funds in its current state.
 
 Static analysis (Slither, Aderyn) confirmed the critical uninitialized-variable finding and surfaced additional low/informational issues.
 
@@ -498,33 +479,3 @@ Solidity ≥ 0.8.20 targets the Shanghai EVM by default, emitting `PUSH0` opcode
 ### [I-5] Unused state variable `_treasureHash` {#i-5-unused-state-variable}
 
 `bytes32 private immutable _treasureHash` (line 35) is declared but never assigned or used for any legitimate purpose (see H-2). Remove it entirely after fixing the double-spend bug.
-
----
-
-### [I-6] `bb` (Barretenberg) missing from devcontainer — build pipeline incomplete {#i-6-bb-missing-devcontainer}
-
-**Severity:** Informational
-**File:** `.devcontainer/`
-
-**Description:**
-
-The devcontainer ships `nargo` but not `bb` (the Barretenberg CLI used for proof generation and Solidity verifier generation). Running `build.sh` fails at step 6:
-
-```
-./circuits/scripts/build.sh: line 208: bb: command not found
-```
-
-This means:
-- No proofs can be generated in the devcontainer
-- `Verifier.sol` can never be regenerated from the verification key
-- All 16 fixture-dependent tests fail
-- The repo cannot be end-to-end tested without manual `bb` installation
-
-**Recommended Mitigation:**
-
-Add `bb` installation to the devcontainer setup. The correct version should be pinned to match the `nargo` version (`1.0.0-beta.19`). Install via:
-
-```bash
-curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/master/barretenberg/bbup/install | bash
-bbup -v $(nargo --version | grep -oP 'nargo version = \K[^,]+')
-```
