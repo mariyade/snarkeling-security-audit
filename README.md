@@ -5,6 +5,8 @@
 **Contest:** [CodeHawks — 2026-04-snarkeling](https://github.com/CodeHawks-Contests/2026-04-snarkeling)  
 **Original codebase:** forked from [CodeHawks-Contests/2026-04-snarkeling](https://github.com/CodeHawks-Contests/2026-04-snarkeling)
 
+📄 [Audit Report (PDF)](2026-04-snarkeling-audit.pdf) | [Audit Report (Markdown)](2026-04-snarkeling-audit.md)
+
 ---
 
 ## What This Repository Is
