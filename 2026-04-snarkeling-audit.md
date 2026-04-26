@@ -36,6 +36,8 @@ Prepared by: *Mariya Danilova*
     - [\[L-2\] `Claimed` event emits `msg.sender` instead of `recipient`](#l-2-claimed-event-wrong-address)
     - [\[L-3\] `nonReentrant` modifier applied to only one of three ETH-sending functions](#l-3-nonreentrant-incomplete-coverage)
     - [\[L-4\] `recipient` public input unconstrained in ZK circuit — binding relies solely on proof system](#l-4-unconstrained-recipient)
+    - [\[L-5\] ETH transfer to smart contract recipient may permanently brick a treasure claim](#l-5-push-payment-to-smart-contract)
+    - [\[L-6\] `withdraw()` missing access control — any address can trigger owner withdrawal](#l-6-withdraw-missing-access-control)
   - [Informational](#informational)
     - [\[I-1\] 11 custom errors declared but never used](#i-1-unused-errors)
     - [\[I-2\] Mixed error-handling styles (`require` strings vs. custom errors)](#i-2-mixed-error-handling)
@@ -100,9 +102,9 @@ Static analysis (Slither, Aderyn) confirmed the critical uninitialized-variable 
 |---------------|-------|
 | High          | 5     |
 | Medium        | 1     |
-| Low           | 4     |
+| Low           | 6     |
 | Informational | 6     |
-| **Total**     | **16**|
+| **Total**     | **18**|
 
 # Findings
 
@@ -431,6 +433,112 @@ assert(recipient == recipient); // documents the binding intent explicitly
 ```
 
 Or better, incorporate `recipient` into the hash computation so it is cryptographically entangled with the proof witness.
+
+---
+
+### [L-5] ETH transfer to smart contract recipient may permanently brick a treasure claim {#l-5-push-payment-to-smart-contract}
+
+**Severity:** Low
+
+**Description:**
+
+`claim()` pushes ETH directly to `recipient` using a low-level call:
+
+```solidity
+// TreasureHunt.sol:107-108
+(bool sent, ) = recipient.call{value: REWARD}("");
+require(sent, "ETH_TRANSFER_FAILED");
+```
+
+If `recipient` is a smart contract that does not implement a `receive()` or `fallback()` function, or one that deliberately reverts on ETH receipt, the transfer fails and the entire `claim()` call reverts. Because `_markClaimed(treasureHash)` has already executed before the transfer (state was updated), the treasure would be marked claimed but no reward was paid — the treasure is permanently bricked.
+
+**Impact:**
+
+A participant who accidentally provides a smart contract address as recipient (e.g. a multisig without ETH receive support) loses their reward permanently. A malicious participant could also use this to grief the hunt by bricking treasures without collecting rewards.
+
+**Proof of Concept:**
+
+```solidity
+// Recipient contract that rejects ETH
+contract NoReceive {
+    // no receive() or fallback()
+}
+
+// claim() reverts at the ETH transfer — treasure bricked
+hunt.claim(proof, treasureHash, payable(address(new NoReceive())));
+```
+
+**Recommended Mitigation:**
+
+Use a pull-payment pattern — store the reward in a mapping and let the recipient withdraw it themselves:
+
+```solidity
+mapping(address => uint256) public pendingRewards;
+
+// in claim():
+pendingRewards[recipient] += REWARD;
+emit Claimed(treasureHash, recipient);
+
+// new function:
+function withdrawReward() external {
+    uint256 amount = pendingRewards[msg.sender];
+    if (amount == 0) revert NoRewardPending();
+    pendingRewards[msg.sender] = 0;
+    (bool sent, ) = msg.sender.call{value: amount}("");
+    require(sent, "ETH_TRANSFER_FAILED");
+}
+```
+
+This eliminates the push-payment risk entirely.
+
+---
+
+### [L-6] `withdraw()` missing access control — any address can trigger owner withdrawal {#l-6-withdraw-missing-access-control}
+
+**Severity:** Low
+
+**Description:**
+
+`withdraw()` has no `onlyOwner` check — any address can call it once all treasures are claimed:
+
+```solidity
+// TreasureHunt.sol:223-232
+function withdraw() external {
+    require(claimsCount >= MAX_TREASURES, "HUNT_NOT_OVER");
+    uint256 balance = address(this).balance;
+    require(balance > 0, "NO_FUNDS_TO_WITHDRAW");
+    (bool sent, ) = owner.call{value: balance}("");
+    require(sent, "ETH_TRANSFER_FAILED");
+    emit Withdrawn(balance, address(this).balance);
+}
+```
+
+ETH still goes to `owner`, so this is not a theft vector. However, any random address can trigger the owner's withdrawal without their knowledge or consent — violating the principle that owner-only flows should be owner-controlled.
+
+**Impact:**
+
+Low — no funds are at risk. But a griefing actor could force the withdrawal at an inconvenient time, or front-run the owner's own `withdraw()` call.
+
+**Proof of Concept:**
+
+```solidity
+// randomUser triggers owner's withdrawal — should revert but doesn't
+vm.prank(randomUser);
+hunt.withdraw();
+assertGt(OWNER.balance, ownerBefore, "ETH reached owner via unauthorized trigger");
+```
+
+**Recommended Mitigation:**
+
+Add the `onlyOwner` modifier or an inline check:
+
+```solidity
+function withdraw() external {
+    require(msg.sender == owner, "ONLY_OWNER");
+    require(claimsCount >= MAX_TREASURES, "HUNT_NOT_OVER");
+    ...
+}
+```
 
 ---
 
