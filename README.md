@@ -81,6 +81,8 @@ contracts/test/
 
 2026-04-snarkeling-audit.md        ← Full audit report (PDF also available)
 slither.config.json                ← Slither static analysis configuration
+onboarding.md                      ← Pre-filled Cyfrin onboarding questionnaire
+onboarding-template.md             ← Blank template for future use
 ```
 
 ---
