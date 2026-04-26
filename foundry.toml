@@ -16,3 +16,8 @@ optimizer_runs = 5000
 # Helpful for large generated verifier contracts:
 # via_ir = true
 
+[invariant]
+runs = 64
+depth = 32
+fail_on_revert = true
+
